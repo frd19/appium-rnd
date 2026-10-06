@@ -1,0 +1,17 @@
+# Appium test suite — generated files only.
+# Source (helpers/, pages/, tests/, config.js) belongs in git; these do not.
+
+# npm dependencies — 8,000+ files, ~65 MB. Never commit these.
+node_modules/
+
+# Per-run artifacts written by saveDump() / saveScreenshot().
+# Restored UI XML and PNGs are disposable: the probe that created them is the
+# source of truth, not the capture.
+dumps/
+
+# Run output captured with  node tests/x.js > file.txt
+*.txt
+
+# OS noise
+Thumbs.db
+.DS_Store

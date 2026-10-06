@@ -1,0 +1,14 @@
+{
+  "name": "tms-appium-tests",
+  "version": "1.0.0",
+  "description": "Appium automation tests for the TMS Transport Order app",
+  "private": true,
+  "scripts": {
+    "smoke": "node tests/smoke.js",
+    "test-01": "node tests/test-01-login.js",
+    "test-02": "node tests/test-02-create-transport-order.js"
+  },
+  "dependencies": {
+    "webdriverio": "^8.40.0"
+  }
+}
