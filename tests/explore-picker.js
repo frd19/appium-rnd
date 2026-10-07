@@ -4,7 +4,7 @@
  * THROWAWAY exploration script — not part of the test suite.
  *
  * The Order Date picker would not select a day via `adb input tap` or via a
- * normal Appium click. Before writing test-02b we need to know whether the
+ * normal Appium click. Before writing test-02 we need to know whether the
  * picker is genuinely broken, or whether we were simply checking the wrong
  * thing.
  *
@@ -216,7 +216,7 @@ async function main() {
 
         console.log('\n=== Exploration finished ===\n');
         console.log('Read the results above: if any approach closed the picker and');
-        console.log('set the date, that is the approach test-02b must use.\n');
+        console.log('set the date, that is the approach test-02 must use.\n');
 
     } catch (error) {
         console.error(`\n❌ Exploration failed: ${error.message}`);

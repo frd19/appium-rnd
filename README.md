@@ -57,11 +57,7 @@ node tests/smoke.js
 |---|---|
 | `node tests/smoke.js` | Proves the device + app work. Run this first. ✅ |
 | `node tests/test-01-login.js` | Login: empty rejected, real login, board appears ✅ |
-| `node tests/test-02-create-transport-order.js` | Create TO: entry path, Basic Detail, validation ✅ |
-| `node tests/test-02b-create-to-fill-form.js` | Fills customer, order date, default condition ✅ |
-| `node tests/test-02c-create-to-route-fleet.js` | Route + Fleet Type, advances to Fleet and SLA ✅ |
-| `node tests/test-02d-standby-time.js` | Stand by Time clock-face dial (now + 2h, minutes 00) ✅ |
-| `node tests/test-02e-create-to-route.js` | Full recorded flow → Submit gate (never submits) — locations, product group, route ✅ |
+| `node tests/test-02-create-transport-order.js` | FULL flow: entry path, validation, Step 1, Fleet and SLA (pickup/standby/drop point/product group), route → Submit gate ✅ |
 | `node tests/all.js` | Runs everything in order and prints a summary |
 | `node tests/probe-selectors.js` | Throwaway: tests dropdown selectors against the live UI |
 | `node tests/explore-picker.js` | Throwaway: works out how the date picker accepts taps |
@@ -109,44 +105,54 @@ Verified passing on the real device, v1.0.14.
 > so on a normal launch it goes straight to the board. Test-01 deliberately
 > wipes app data to force it. **If you use the app yourself afterwards, log back in.**
 
-### Test-02 — Create new transport order ✅ PASSING (entry path only)
+### Test-02 — Create new transport order ✅ PASSING (full flow)
 
-Covers, from the test case sheet:
+Test case Test-02 from the sheet. One file walks the entire flow — parts were
+previously split across `test-02b`/`02c`/`02d`/`02e` while each screen was
+being worked out; once every step passed, they were consolidated back into
+this single test (no coverage was dropped).
+
+Covered, in order:
 
 1. Sign in if needed
-2. Open the create menu
-3. Verify "Create new transport order" and "Convert sales order" exist
-4. Enter the Create Transport Order form
-5. Confirm both step tabs exist ("Basic Detail", "Fleet and SLA")
-6. Confirm all 6 Basic Detail fields exist (scrolls to reach them)
-7. **Negative:** submit an empty form and confirm it is rejected
-8. Cancel out cleanly
+2. Open the create menu; verify "Create new transport order" and
+   "Convert sales order" exist
+3. Enter the Create Transport Order form
+4. Confirm both step tabs exist ("Basic Detail", "Fleet and SLA") —
+   checked at the top, before any field scrolling
+5. Confirm all 6 Basic Detail fields exist (scrolls to reach them)
+6. **Negative:** submit an empty form and confirm it is rejected
+7. Fill Step 1, verified against the form:
 
-**Not yet covered:** actually *filling* the form (customer, date, route,
-fleet), and the second step "Fleet and SLA". Those need the dropdown overlays
-walked first — see the remaining work below.
+   | Field | Value | Result |
+   |---|---|---|
+   | Customer | PT QA | ✅ selected |
+   | Order Date | today | ✅ set to the **current** date (read back from the field) |
+   | Route | Sidoarjo → Surabaya | ✅ (origin first — see route-order note below) |
+   | Transport Condition | default | ✅ `Frozen` (pre-filled) |
+   | Fleet Type | BUP Freezer | ✅ selected |
 
-### Test-02b — Fill the form ✅ PASSING
-
-Test-02 above only proves the form **opens** and blocks an empty submit. Its
-stated expectation in the sheet is "Success to create TO" — so this file does the
-actual filling.
-
-Covered, using the test data from the sheet:
-
-| Field | Value | Result |
-|---|---|---|
-| Customer | PT QA | ✅ selected |
-| Order Date | today | ✅ set to the **current** date |
-| Transport Condition | default | ✅ `Frozen` (pre-filled) |
+8. Advance to "Fleet and SLA"; set Pick-Up Location `tirtamas` →
+   Tirtamas Coldstorindo
+9. Set Stand by Time to **now + 2h, minutes 00** (clock-face dial) —
+   read back from the form field so a non-committed value cannot pass
+10. Set Drop Point Location 1 `hokky` → Hokky Buah - Citraland
+11. Add Product Group `Ayam` / `10 Karung` / `10 kg` / `-18` (typed as text)
+12. Advance to the Route step; select route from the map — card
+    "BUP TCL - HOKKY" confirmed
+13. Reach the **Submit gate** and stop (shared-tablet rule)
 
 > **The Order Date is computed at runtime**, not hardcoded. `selectOrderDateToday()`
-> presses the picker's `Today` shortcut, so the test is correct on any day. The
-> `3 Oct 2026` quoted elsewhere in this file was the date it was last verified
-> on — do not turn it into a fixed expectation.
+> presses the picker's `Today` shortcut, so the test is correct on any day.
+>
+> The route order is **Sidoarjo first, Surabaya second** — the reverse of the
+> sheet's wording ("Surabaya - Sidoarjo"), confirmed with the tester.
+>
+> The Stand by Time rule is **now + 2 hours, minutes 00**, matching both manual
+> walkthroughs (13:43 → 15:00; 14:41 → 16:00).
 
 ```powershell
-node tests/test-02b-create-to-fill-form.js
+node tests/test-02-create-transport-order.js
 ```
 
 ### Remaining work
@@ -155,18 +161,16 @@ node tests/test-02b-create-to-fill-form.js
 |---|---|
 | Test-01 Login | ✅ passing |
 | Smoke test | ✅ passing |
-| Test-02 entry path + fields + validation | ✅ passing |
-| Test-02b customer + order date + default condition | ✅ passing |
-| Test-02c route + fleet type, advance to Step 2 | ✅ passing |
-| **Step 2 — Fleet and SLA** (pick up, standby time, drop point) | ✅ encoded (tests 02d + 02e) |
-| **Step 2 — Product Group** (`Ayam`, `10 Karung`, `10 kg`, `-18`) | ✅ encoded (test-02e) |
-| **Step 3 — Route** (map, recommendation, Select Route) | ✅ encoded (test-02e) |
+| Test-02 full create-TO flow (entry path → validation → Step 1 → Step 2 → Route → Submit gate) | ✅ passing |
 | **Final submit → order actually created** | not started (deliberate — see below) |
 | Test-03 Convert sales order | not started (you marked it optional) |
 
-> **The order is still not actually created.** No test presses Next and confirms
-> a new card appears on the board. Until one does, "Success to create TO" is
-> not demonstrated — only that the form fills correctly up to that point.
+> **The order is still not actually created.** No test presses Submit and
+> confirms a new card appears on the board. The shared-tablet rule forbids
+> creating orders, so "Success to create TO" is not demonstrated — only that
+> the form fills correctly and reaches the Submit gate. If a dedicated, safe
+> environment ever appears, the last step would be: press Submit, then find
+> the new card by filtering for `PT QA` on the board.
 
 ### Test-03 — Convert sales order ⏭ NOT STARTED
 

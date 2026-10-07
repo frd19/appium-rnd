@@ -58,12 +58,13 @@ If `smoke.js` fails, nothing else will work — fix that before anything else.
 |---|---|---|
 | Smoke | `node tests/smoke.js` | ✅ passing |
 | Test-01 Login | `node tests/test-01-login.js` | ✅ passing |
-| Test-02 Create TO (entry path) | `node tests/test-02-create-transport-order.js` | ✅ passing |
-| Test-02b Fill form | `node tests/test-02b-create-to-fill-form.js` | ✅ passing |
-| Test-02c Route + Fleet | `node tests/test-02c-create-to-route-fleet.js` | ✅ passing |
-| Test-02d Stand by Time | `node tests/test-02d-standby-time.js` | ✅ passing (now + 2h, minutes 00) |
-| Test-02e Full recorded flow | `node tests/test-02e-create-to-route.js` | ✅ passing (7 Oct) — stops at the Submit gate, never submits |
+| Test-02 Create TO (full flow) | `node tests/test-02-create-transport-order.js` | ✅ passing — entry path → validation → Step 1 → Step 2 → Route → Submit gate |
 | All of the above | `node tests/all.js` | see §9 |
+
+> The five separate Test-02 files (test-02b … 02e) that used to split up this
+> flow staged the work while the screens were being walked. Once every step
+> passed they were consolidated back into `test-02-create-transport-order.js`;
+> nothing extra was lost — the read-backs and verifications moved in too.
 
 ### What the sheet's test case still needs
 
@@ -71,9 +72,9 @@ If `smoke.js` fails, nothing else will work — fix that before anything else.
 |---|---|
 | 1–3 Navigate, open button, Create new transport order | ✅ done |
 | 4 Customer `PT QA`, Order date today, Route, Transport condition, Fleet type | ✅ **done** |
-| 5A Pick up `tirtamas coldstorindo`, standby time, drop point `Hokky buah citraland` | ✅ encoded (tests 02d + 02e) |
-| 5B Product Group — `Ayam`, `10 Karung`, `10 kg`, `-18` | ✅ encoded (test-02e) — minus proven typeable, fields found by position |
-| 6 Route → `RECOMMENDATION` → Select Route | ✅ encoded (test-02e) — two-phase step with a slow map, see §5 |
+| 5A Pick up `tirtamas coldstorindo`, standby time, drop point `Hokky buah citraland` | ✅ encoded (test-02) |
+| 5B Product Group — `Ayam`, `10 Karung`, `10 kg`, `-18` | ✅ encoded (test-02) — minus proven typeable, fields found by position |
+| 6 Route → `RECOMMENDATION` → Select Route | ✅ encoded (test-02) — two-phase step with a slow map, see §5 |
 | — Confirm the order was actually created | ❌ not started |
 
 **Nothing presses the final submit yet.** "Success to create TO" — the sheet's
@@ -202,7 +203,7 @@ chosen route card and the final gate (state 19):
 [Cancel]  [Submit]
 ```
 
-⚠️ **Never press Submit.** Test-02e stops at this gate (shared-device rule —
+⚠️ **Never press Submit.** Test-02 stops at this gate (shared-device rule —
 no TO may be created or deleted).
 
 **How `selectRoute()` tells the buttons apart:** both "Select Route" buttons
@@ -346,7 +347,9 @@ which answers this on the first run.
    computed coordinates on the clock face. **Do not guess** — write the action
    only once the dump shows which it is.
 5. Write `selectLocation()`, `setStandByTime()` in `pages/transportOrder.js`.
-6. `test-02d` for Step 5A, then Product Group for 5B, then the route page.
+6. All of §3's steps (standby 5A, Product Group 5B, the route page) were
+   encoded incrementally as test-02b…02e, then **consolidated into**
+   `tests/test-02-create-transport-order.js` (7 Oct).
 
 ---
 
@@ -459,25 +462,27 @@ Full detail in `README.md` §"Known app behaviours". The short version:
 
 ---
 
-## 9. Known open problem — the suite flake
+## 9. Run history and past flakes
 
-`node tests/all.js` reported **Test-02 FAIL** on one run, while Test-02 passes
-standalone and passes immediately after Test-01. So it is not simply an
-ordering problem, and the cause is still unknown.
+`node tests/all.js` — every failure so far has been diagnosed and fixed; none
+is open. Capture full output when re-running (`node tests/all.js 2>&1 |
+Tee-Object runs\runN.txt`) and read `runs\runN.txt`, not a `Select-Object
+-Last N` truncation — that mistake was made once and hid the failure reason.
 
-Reproduce with full output captured — do **not** pipe through
-`Select-Object -Last N`, that truncates away the failure reason (this mistake
-was made once already):
+| Run | Suite | Result |
+|---|---|---|
+| #1 (6 Oct) | all.js (7 files) | ❌ derailed — Chrome/freeform window covered the app (§8.14). Environmental, not a test bug. |
+| #2 (7 Oct) | all.js (7 files) | ❌ 5/7 — Test-02e: bottom-right "Select Route" was `enabled="false"` while the route was still computing. **Fixed:** `selectRoute()` polls up to 120 s for it to become enabled (the app's own "route ready" gate). |
+| #3 (7 Oct) | — | stopped on user request mid-run |
+| #4 (7 Oct) | all.js (7 files) | ✅ 7/7 — see `runs/run4.txt` |
+| #5 (7 Oct) | all.js (3 files, consolidated) | ❌ 2/3 — Test-02 failed at Pick-Up Location. **Root cause:** the suggestion list was read ONCE, 3 s after typing, and that read caught the Google autocomplete before it rendered. The code then fell into the "empty list" fallback and pressed a **disabled** `Select Location` button (`enabled="false"` in the dump — no row had been selected). **Fixed:** `selectLocation()` now polls up to 12 s for the wanted row, falls back to the direct-commit path only when the list is genuinely empty, refuses to guess when rows exist but none matches, and never presses "Select Location" until it is `enabled` (`anySuggestionRow()` added for the empty-list check). |
+| #6 (7 Oct) | all.js (3 files, consolidated) | ✅ 3/3 — see `runs/run6.txt` |
 
-```powershell
-node tests/test-01-login.js  2>&1 | Out-File run1.txt
-node tests/test-02-create-transport-order.js 2>&1 | Out-File run2.txt
-Get-Content run2.txt
-```
-
-Best guess: timing under load when four tests run back to back, but that is a
-hypothesis, not a diagnosis. Fix it before adding more tests — a suite that
-only passes in some conditions is worse than a small one that always passes.
+Why run #5 only surfaced now: in the seven-file suite, `test-02d` and
+`test-02e` ran their own location steps moments before, which by luck gave the
+autocomplete a few extra seconds to render. The consolidated test removed that
+accidental delay and exposed the race for what it was; the fix makes the wait
+explicit instead of relying on luck.
 
 ---
 

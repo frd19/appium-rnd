@@ -431,6 +431,29 @@ const TransportOrderPage = {
     },
 
     /**
+     * True when the location overlay shows at least one suggestion row.
+     *
+     * Rows are rendered as multi-line content-desc ("name\naddress"). While
+     * the overlay is open, the form behind it is excluded from the UI tree,
+     * so any multi-line labelled node here is a suggestion row. Appium can
+     * return the XML entity (`&#10;`) or the decoded newline — accept both.
+     */
+    async anySuggestionRow(driver) {
+        const nodes = await driver.$$('//*[@content-desc != ""]');
+        const total = await nodes.length;
+        for (let i = 0; i < total; i += 1) {
+            const desc = await nodes[i].getAttribute('content-desc')
+                .catch(() => null);
+            if (!desc || desc === 'null') continue;
+            const text = String(desc);
+            if (!text.includes('\n') && !text.includes('&#10;')) continue;
+            if (!(await nodes[i].isDisplayed().catch(() => false))) continue;
+            return true;
+        }
+        return false;
+    },
+
+    /**
      * Fill one searchable location field, fully.
      *
      * Three steps, all required (confirmed by the tester, 6 Oct):
@@ -477,10 +500,28 @@ const TransportOrderPage = {
         // The suggestions are readable while the keyboard is up — they sit
         // above it. So: read and press the suggestion FIRST, and only touch
         // the keyboard afterwards, when focus has left the search box.
-        const picked = await this.matchSuggestion(driver, depotName);
+        // Google autocomplete is ASYNC: on 7 Oct the first read (3 s after
+        // typing) caught an EMPTY list even though the rows appeared a moment
+        // later. The old code then fell into the "empty list" fallback and
+        // pressed a DISABLED "Select Location" (enabled="false"), so nothing
+        // committed and the overlay stayed open. Now we POLL for the wanted
+        // row, and only fall back when the list stays genuinely empty.
+        const deadlineSuggest = Date.now() + 12000;
+        let picked = null;
+        let listEmpty = false;
+        while (Date.now() < deadlineSuggest) {
+            const hit = await this.matchSuggestion(driver, depotName);
+            if (hit) { picked = hit; break; }
+            if (!(await this.anySuggestionRow(driver))) {
+                listEmpty = true;
+                break; // rows are not coming — use the recorded fallback
+            }
+            await driver.pause(1500);
+        }
+
         if (picked) {
             log('INFO', `${caption}: tapped suggestion "${picked}".`);
-        } else {
+        } else if (listEmpty) {
             // RECORDED, 6 Oct (fleet-sla-record.txt, states 14-16):
             //   typing the FULL query "tirtamas" leaves the suggestion list
             //   EMPTY ("No address found"), yet pressing Select Location
@@ -490,6 +531,11 @@ const TransportOrderPage = {
             //   value the form actually shows under the caption.
             log('INFO', `${caption}: no suggestion listed for "${depotName}" `
                 + `— committing the typed query "${query}" directly.`);
+        } else {
+            throw new Error(
+                `${caption}: suggestions ARE listed but none matches `
+                + `"${depotName}". Refusing to confirm a guessed location.`
+            );
         }
 
         // Step 3 — commit it.
@@ -498,11 +544,32 @@ const TransportOrderPage = {
         // the form behind it (and therefore the caption) is not in the tree.
         // Inside the overlay there is exactly one "Select Location", so the
         // scoping that matters was already applied when we found the field.
+        //
+        // The button starts DISABLED until a suggestion is selected (the 7 Oct
+        // dump: enabled="false" while rows were listed). Wait for the app's
+        // own "value ready" gate before pressing — the same pattern as the
+        // bottom-right "Select Route" button on the map step.
         const confirm = await driver.$('~Select Location');
         if (!(await confirm.isExisting().catch(() => false))) {
             throw new Error(
                 `Chose "${depotName}" but could not find the "Select Location" `
                 + `button to confirm it. The value is NOT committed yet.`
+            );
+        }
+        const deadlineEnabled = Date.now() + 8000;
+        let ready = String(
+            await confirm.getAttribute('enabled').catch(() => 'false')
+        ) === 'true';
+        while (!ready && Date.now() < deadlineEnabled) {
+            await driver.pause(1000);
+            ready = String(
+                await confirm.getAttribute('enabled').catch(() => 'false')
+            ) === 'true';
+        }
+        if (!ready) {
+            throw new Error(
+                `"Select Location" never became enabled for "${depotName}" — `
+                + 'no value is committed and pressing now would be a no-op.'
             );
         }
         await this.press(driver, confirm);

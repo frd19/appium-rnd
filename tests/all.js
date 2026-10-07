@@ -35,27 +35,7 @@ const TESTS = [
     {
         file: 'test-02-create-transport-order.js',
         name: 'Test-02 Create transport order',
-        why: 'entry path, Basic Detail fields, validation',
-    },
-    {
-        file: 'test-02b-create-to-fill-form.js',
-        name: 'Test-02b Fill the form',
-        why: 'select customer, set order date, check default condition',
-    },
-    {
-        file: 'test-02c-create-to-route-fleet.js',
-        name: 'Test-02c Route and Fleet Type',
-        why: 'complete Step 1, advance to Fleet and SLA',
-    },
-    {
-        file: 'test-02d-standby-time.js',
-        name: 'Test-02d Stand by Time',
-        why: 'clock-face dial: now + 2h, minutes 00',
-    },
-    {
-        file: 'test-02e-create-to-route.js',
-        name: 'Test-02e Full recorded flow',
-        why: 'locations, product group, route — stops at Submit gate',
+        why: 'full flow: entry path, validation, Step 1, Fleet and SLA, route — stops at Submit gate (shared-tablet rule)',
     },
 ];
 

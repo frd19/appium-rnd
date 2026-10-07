@@ -1,42 +1,70 @@
 /**
  * tests/test-02-create-transport-order.js
  * --------------------------------------
- * Test case Test-02 (from "TO Small scope - Appium" FUNCTIONAL sheet)
+ * Test case Test-02 — the FULL create-transport-order flow, one file.
  *
- *   TC ID   : Test-02
- *   Module  : TO / Create new transport order
- *   Role    : Planner
- *   Precondition: user already logged in
- *   Expected: Success to create TO
- *   Status in sheet: PASSED (manually)
+ * This is a consolidation of five files that used to split the same flow:
+ *   test-02        entry path, Basic Detail fields, empty-form validation
+ *   test-02b       customer + order date fill
+ *   test-02c       origin/destination cities + fleet type + advance
+ *   test-02d       stand-by clock dial, with independent form read-back
+ *   test-02e       pick-up, drop point, product group, route, Submit gate
+ * Each one repeated the setup and the Step 1 filling, so they were merged
+ * back into a single test that walks the sheet's flow end to end. Nothing
+ * was dropped — the read-backs and verifications were moved in too.
  *
- * Test data from the sheet:
- *   Customer           : PT QA
- *   Order date         : adjust today
- *   Route              : Surabaya - Sidoarjo
- *   Transport condition: default
- *   Fleet type         : BUP Freezer
+ *   Step 1 (Basic Detail)
+ *     Customer     PT QA              (search overlay)
+ *     Order Date   today              (date picker, "Today")
+ *     Route        Sidoarjo - Surabaya   (see route-order note below)
+ *     Condition    Frozen             (default, pre-filled)
+ *     Fleet        BUP Freezer
  *
- * ─────────────────────────────────────────────────────────────────────
- * ⚠️  SCOPE NOTE
- *   This test covers the ENTRY PATH and Step 1 (Basic Detail),
- *   up to and including the required-field validation check.
+ *   Step 2 (Fleet and SLA)
+ *     Pick-Up Location      "tirtamas" -> Tirtamas Coldstorindo
+ *     Stand by Time         now + 2h, minutes 00   (clock-face dial)
+ *     Drop Point Location 1 "hokky"   -> Hokky Buah - Citraland
+ *     Product Group         Ayam 10 Karung, 10 Kg, -18 °C
  *
- *   The remaining steps in the sheet — Fleet and SLA, Product Group,
- *   and Route selection — are covered separately in
- *   test-02b-create-to-fleet-sla.js once those screens have been
- *   walked. They need dropdown data that is not yet mapped.
+ *   Step 3 (Route)
+ *     Map -> Select Route -> route card "BUP TCL - HOKKY"
+ *     SUBMIT GATE reached.
  *
- * ─────────────────────────────────────────────────────────────────────
+ * Sheet test case:
+ *   TC ID    : Test-02
+ *   Module   : TO / Create new transport order
+ *   Role     : Planner
+ *   Expected : "Success to create TO"
+ *   Test data: Customer PT QA, Order date today, Route Surabaya - Sidoarjo,
+ *              condition default, fleet BUP Freezer.
+ *
+ * ⚠️  SHARED-TABLET RULE — THE SUBMIT GATE IS THE END
+ *   The sheet expects "Success to create TO", but the shared-device rules
+ *   forbid creating orders. We inspect up to the Submit button, then cancel
+ *   the form cleanly. No TO is ever created or deleted.
+ *
+ * ⚠️  ROUTE ORDER — DO NOT "FIX" IT
+ *   The sheet reads "Surabaya - Sidoarjo", but the form's first Route field
+ *   is the ORIGIN. Confirmed with the tester: Origin = Sidoarjo, Destination
+ *   = Surabaya, the reverse of the sheet's wording.
+ *
+ * ⚠️  VERIFY AGAINST THE APP, NEVER AGAINST OUR OWN LOGS
+ *   The order date, stand-by time, product group values and the route card
+ *   are read back from the fields the app actually shows. A helper that
+ *   "succeeds" while the form never took the value is the false-success bug
+ *   this suite exists to catch.
+ *
+ * Run:  node tests/test-02-create-transport-order.js
  */
 
 const {
-    connect, quit, restartApp, ensureLoggedIn, waitFor, tapById, log, saveDump, saveScreenshot,
+    connect, quit, restartApp, ensureLoggedIn, ensureFullscreen,
+    ensureAppRunning, waitFor, log, saveDump, saveScreenshot,
 } = require('../helpers/device');
 const page = require('../pages/transportOrder');
 
 async function main() {
-    console.log('\n=== Test-02 : Create new transport order ===\n');
+    console.log('\n=== Test-02 : Create new transport order (full flow) ===\n');
 
     let driver;
     try {
@@ -44,119 +72,181 @@ async function main() {
         log('INFO', 'Connecting and opening the app...');
         driver = await connect();
         await restartApp(driver);
-
-        // Sign in if the app is asking for it
+        await ensureFullscreen(driver);
         await ensureLoggedIn(driver);
-
         await page.waitForBoard(driver);
         log('PASS', 'Kanban board is showing.');
 
-        // --- Step 1: open the create menu ---
+        // === PART A — ENTRY PATH AND VALIDATION (was test-02) ===
         log('INFO', 'Opening the Transport Order menu...');
         await page.openCreateMenu(driver);
-        log('PASS', 'Menu opened.');
 
-        // --- Step 2: verify both menu options exist ---
-        // "Create new transport order" is Test-02
-        // "Convert sales order" is Test-03
+        // "Create new transport order" is Test-02; "Convert sales order" is
+        // the future Test-03. Both must be offered.
         await waitFor(driver, '~Create new transport order');
         await waitFor(driver, '~Convert sales order');
         log('PASS', 'Found "Create new transport order" and "Convert sales order".');
 
-        // --- Step 3: enter the create form ---
         await page.tapCreateNew(driver);
         await page.waitForCreateForm(driver);
         log('PASS', 'Create Transport Order form is open.');
 
-        // --- Step 4: verify both step tabs exist ---
-        // ORDER MATTERS HERE. The step tabs ("Basic Detail" / "Fleet and
-        // SLA") live in the LEFT RAIL of the dialog, but that rail is part
-        // of the same ScrollView as the form fields. Scroll down to reach
-        // "Fleet Type" and the tabs scroll out of the UI tree entirely.
-        //
-        // So we check the tabs at the top of the form, BEFORE scrolling
-        // through the fields. Doing it the other way round fails.
-        //
-        // NOTE: these tabs have a newline in their content-desc
-        // ("Basic Detail\nManage core order detail and customer info").
-        // Matching newlines is unreliable, so we use XPath "starts with".
+        // The step tabs live in the SAME ScrollView as the fields. Scrolling
+        // down to reach "Fleet Type" removes the tabs from the UI tree, so
+        // check them at the top, before any field scrolling.
         await page.scrollFormToTop(driver);
-        await waitFor(
-            driver,
-            '//*[starts-with(@content-desc,"Basic Detail")]'
-        );
-        await waitFor(
-            driver,
-            '//*[starts-with(@content-desc,"Fleet and SLA")]'
-        );
+        await waitFor(driver, '//*[starts-with(@content-desc,"Basic Detail")]');
+        await waitFor(driver, '//*[starts-with(@content-desc,"Fleet and SLA")]');
         log('PASS', 'Step tabs found: "Basic Detail" and "Fleet and SLA".');
 
-        // --- Step 5: verify the Basic Detail fields ---
-        // The sheet lists these fields for Step 1:
-        //   Customer, Order Date, Route, Transport Condition, Fleet type
-        //
-        // These are the REAL labels, read off the live app by scrolling:
-        //   Customer *               -> "Select Customer"  (dropdown)
-        //   Order Date *             -> "Select Date"       (date picker)
-        //   Route *                  -> "Origin City" + "Destination City"
-        //   Transport Condition *    -> "Frozen"            (default value)
-        //   Fleet Type *             -> "Select Fleet"      (dropdown)
-        //
-        // IMPORTANT: the form is taller than the dialog, so anything below
-        // the fold is ABSENT from the UI tree, not merely invisible.
-        // scrollToField() handles that; a plain waitFor() would fail here.
+        // All 6 Basic Detail fields. Fields below the fold are ABSENT from
+        // the accessibility tree, not merely invisible — each is scrolled
+        // into view before looking for it.
         const fields = [
-            'Select Customer',   // Customer *
-            'Select Date',       // Order Date *
-            'Origin City',       // Route *
-            'Destination City',  // Route *
-            'Frozen',            // Transport Condition * (sheet says "default")
-            'Select Fleet',      // Fleet Type *
+            'Select Customer',      // Customer *
+            'Select Date',          // Order Date *
+            'Origin City',          // Route *
+            'Destination City',     // Route *
+            'Frozen',               // Transport Condition * (default value)
+            'Select Fleet',         // Fleet Type *
         ];
         for (const field of fields) {
             await page.scrollToField(driver, field);
             log('PASS', `Field found: ${field}`);
         }
-        log('PASS', `All ${fields.length} Basic Detail fields are present `
-            + '(Customer, Order Date, Route, Transport Condition, Fleet Type).');
+        log('PASS', `All ${fields.length} Basic Detail fields are present.`);
 
-        // --- Step 6: negative check — required fields ---
-        // Press Next with an empty form. The app should NOT accept it,
-        // because Customer, Order Date, Route and Transport Condition
-        // are all marked with *.
+        // Negative: Customer, Order Date, Route and Transport Condition are
+        // required (*). An empty form must be rejected.
         log('INFO', 'Checking required-field validation (submitting empty form)...');
         await page.tapNext(driver);
-
         if (await page.stillOnBasicDetail(driver)) {
-            log('PASS', 'Empty form was correctly rejected — '
-                + 'still on Basic Detail. Required fields are enforced.');
+            log('PASS', 'Empty form was correctly rejected — still on Basic '
+                + 'Detail. Required fields are enforced.');
         } else {
-            log('FAIL', 'Empty form was accepted. Expected validation to block it.');
-            process.exitCode = 1;
+            throw new Error('Empty form was accepted. Expected validation to '
+                + 'block it.');
         }
 
-        // --- Step 7: go back out cleanly ---
-        log('INFO', 'Cancelling out of the form...');
-        await page.tapCancel(driver);
-        log('PASS', 'Form cancelled, returned to the board.');
+        // === PART B — FILL STEP 1 (was 02b + 02c) ===
+        // The rejected Next left us on the form. Scroll back to the top and
+        // fill it; each helper scrolls itself into position from there.
+        await page.scrollFormToTop(driver);
+        log('INFO', 'Filling Step 1 (Basic Detail)...');
+        await page.selectCustomer(driver, 'PT QA');
+        log('PASS', 'Customer = PT QA');
+
+        await page.selectOrderDateToday(driver);
+        const date = await page.readOrderDate(driver);
+        if (!date) {
+            throw new Error('The date picker closed but the Order Date field '
+                + 'does not show a date — the value may not have been applied.');
+        }
+        log('PASS', `Order Date is set to "${date}".`);
+
+        // Origin and destination are searchable lists that open at
+        // "Abepura, Papua", so we type the city name to filter instead of
+        // scrolling to the rows. Endpoint 1 -> Origin, Endpoint 2 ->
+        // Destination (the reverse of the sheet's wording).
+        log('INFO', 'Setting route Sidoarjo - Surabaya...');
+        await page.selectCity(driver, 'Origin City', 'Sidoarjo');
+        await page.selectCity(driver, 'Destination City', 'Surabaya');
+        log('PASS', 'Route Sidoarjo - Surabaya');
+
+        await page.scrollToField(driver, 'Frozen');
+        log('PASS', 'Transport condition is the default "Frozen".');
+
+        await page.selectFleetType(driver, 'BUP Freezer');
+        log('PASS', 'Fleet Type = BUP Freezer');
+
+        log('INFO', 'Pressing Next to move to "Fleet and SLA"...');
+        await page.advanceToFleetAndSla(driver);
+        log('PASS', 'Advanced to the "Fleet and SLA" step.');
+
+        // === PART C — STEP 2, FLEET AND SLA (was 02d + 02e) ===
+        log('INFO', 'Setting Pick-Up Location (tirtamas)...');
+        await page.selectLocation(
+            driver, 'Pick-Up Location *', 'tirtamas', 'Tirtamas Coldstorindo'
+        );
+        log('PASS', 'Pick-Up Location committed.');
+
+        // Stand by Time: clock-face dial, now + 2h, minutes 00. Verified twice
+        // — once by the helper, once by reading the actual form field, so a
+        // dial that "accepts" a value without committing it cannot pass.
+        const want = page.targetStandbyTime();
+        log('INFO', `Setting Stand by Time to `
+            + `${String(want.hour).padStart(2, '0')}:00 (now + 2h).`);
+        const set = await page.selectStandbyTime(driver);
+        await ensureAppRunning(driver);
+        const shown = await page.readStandbyTime(driver);
+        if (!shown || !shown.includes(set)) {
+            throw new Error(
+                `The Stand by Time field reads "${shown}" but should contain `
+                + `"${set}". The dial accepted the value but the form did not `
+                + 'take it.'
+            );
+        }
+        log('PASS', `Stand by Time set and confirmed on the form: "${shown}".`);
+
+        log('INFO', 'Setting Drop Point Location 1 (hokky)...');
+        await page.selectLocation(
+            driver, 'Drop Point Location 1 *', 'hokky', 'Hokky Buah - Citraland'
+        );
+        log('PASS', 'Drop Point Location 1 committed.');
+
+        log('INFO', 'Adding Product Group (Ayam 10 Karung, 10 Kg, -18°C)...');
+        await page.addProductGroup(driver);
+        log('PASS', 'Product Group added.');
+
+        // === PART D — STEP 3, ROUTE (was 02e) ===
+        log('INFO', 'Pressing Next to the Route step...');
+        await page.dismissKeyboard(driver);
+        const next2 = await waitFor(driver, '~Next');
+        await page.press(driver, next2);
+        await driver.pause(3000);
+        log('PASS', 'Route step reached (the map can take a minute to load).');
+
+        const card = await page.selectRoute(driver);
+        log('PASS', `Route selected: ${card}.`);
+
+        log('PASS', 'Submit gate reached. NOT pressing Submit — shared-tablet '
+            + 'rule, no TO may be created.');
 
         console.log('\n=== Test-02: PASS ✅ ===\n');
-        console.log('  Covered: entry path + Basic Detail + required-field validation.');
-        console.log('  Not yet covered: Fleet and SLA, Product Group, Route selection.');
-        console.log('  See test-02b for the next screens.\n');
+        console.log('  The full create-TO flow now runs end to end:');
+        console.log('    Step 1  PT QA | today | Sidoarjo - Surabaya | BUP Freezer');
+        console.log('    Step 2  Tirtamas Coldstorindo | ' + `${set}` + ' | '
+            + 'Hokky Buah - Citraland | Ayam group');
+        console.log(`    Step 3  Route "${card}" | Submit gate reached`);
+        console.log('');
+        console.log('  The form is cancelled out cleanly — nothing is created.\n');
 
     } catch (error) {
         console.error('\n❌ Test-02 FAILED');
         console.error(`   Reason: ${error.message}\n`);
 
         if (driver) {
-            console.error(`   UI tree saved:  ${await saveDump(driver, 'test-02-failure')}`);
-            console.error(`   Screenshot:     ${await saveScreenshot(driver, 'test-02-failure')}`);
+            try {
+                console.error(`   UI tree saved:  `
+                    + `${await saveDump(driver, 'test-02-failure')}`);
+                console.error(`   Screenshot:     `
+                    + `${await saveScreenshot(driver, 'test-02-failure')}`);
+            } catch {
+                // the reason above is the real news
+            }
         }
 
         process.exitCode = 1;
 
     } finally {
+        if (driver) {
+            try {
+                log('INFO', `cleanup: `
+                    + `${await page.leaveFormCleanly(driver)}`);
+            } catch {
+                log('WARN', 'cleanup: could not verify');
+            }
+        }
         await quit(driver);
     }
 }
