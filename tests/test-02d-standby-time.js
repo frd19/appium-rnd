@@ -2,7 +2,7 @@
  * tests/test-02d-standby-time.js
  * --------------------------------
  * Part 4 of Test-02. Fills Step 1, advances to Step 2, and sets the
- * Stand by Time to (current hour + 1) : 00 using the drag gesture.
+ * Stand by Time to (current hour + 2) : 00 using the drag gesture.
  *
  * This is the first test to exercise setClockTime(), which was previously a
  * deliberate throw. It exists on its own so the clock can be proven in
@@ -14,7 +14,7 @@
  *   Order date  today
  *   Route       Sidoarjo - Surabaya
  *   Fleet       BUP Freezer
- *   Stand by    now + 1h, minutes 00
+ *   Stand by    now + 2h, minutes 00
  *
  * The manual sequence, unchanged:
  *   1. drag the HOUR to the target
@@ -67,7 +67,7 @@ async function main() {
         const want = page.targetStandbyTime();
         log('INFO', `Setting Stand by Time to `
             + `${String(want.hour).padStart(2, '0')}:00 `
-            + `(current hour + 1, minutes always 00).`);
+            + `(current hour + 2, minutes always 00).`);
 
         const set = await page.selectStandbyTime(driver);
         log('PASS', `Stand by Time set to ${set}.`);

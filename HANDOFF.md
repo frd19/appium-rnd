@@ -61,7 +61,9 @@ If `smoke.js` fails, nothing else will work — fix that before anything else.
 | Test-02 Create TO (entry path) | `node tests/test-02-create-transport-order.js` | ✅ passing |
 | Test-02b Fill form | `node tests/test-02b-create-to-fill-form.js` | ✅ passing |
 | Test-02c Route + Fleet | `node tests/test-02c-create-to-route-fleet.js` | ✅ passing |
-| All of the above | `node tests/all.js` | ⚠️ see §7 |
+| Test-02d Stand by Time | `node tests/test-02d-standby-time.js` | ✅ passing (now + 2h, minutes 00) |
+| Test-02e Full recorded flow | `node tests/test-02e-create-to-route.js` | ✅ passing (7 Oct) — stops at the Submit gate, never submits |
+| All of the above | `node tests/all.js` | see §9 |
 
 ### What the sheet's test case still needs
 
@@ -69,9 +71,9 @@ If `smoke.js` fails, nothing else will work — fix that before anything else.
 |---|---|
 | 1–3 Navigate, open button, Create new transport order | ✅ done |
 | 4 Customer `PT QA`, Order date today, Route, Transport condition, Fleet type | ✅ **done** |
-| 5A Pick up `tirtamas coldstorindo`, standby time, drop point `Hokky buah citraland` | ❌ not started — layout mapped (§5), being probed |
-| 5B Product Group — `Ayam`, `10 Karung`, `10 kg`, `-18` | ❌ not started — sub-tab not opened yet |
-| 6 Route → `RECOMENDATION` → Select Route | ❌ not started — now know it's the route page with `Toll` / `Non Toll` |
+| 5A Pick up `tirtamas coldstorindo`, standby time, drop point `Hokky buah citraland` | ✅ encoded (tests 02d + 02e) |
+| 5B Product Group — `Ayam`, `10 Karung`, `10 kg`, `-18` | ✅ encoded (test-02e) — minus proven typeable, fields found by position |
+| 6 Route → `RECOMMENDATION` → Select Route | ✅ encoded (test-02e) — two-phase step with a slow map, see §5 |
 | — Confirm the order was actually created | ❌ not started |
 
 **Nothing presses the final submit yet.** "Success to create TO" — the sheet's
@@ -114,30 +116,100 @@ stated expectation for Test-02 — is therefore **not yet demonstrated**.
 
 ### Step 2 layout, as captured from the device
 
-Step 2 is reachable and **already mapped** — `probe-step2.js` ran to completion
-and its output is saved in `step2.txt`:
-
-```powershell
-Get-Content step2.txt
-```
+Step 2 reachable and mapped twice: `probe-step2.js` (output in `step2.txt`) and,
+definitively, the 6 Oct manual walkthrough recorded in
+`fleet-sla-record.txt` (29 states, every control with bounds).
 
 The step has **two sub-tabs**: `Route & SLA` and `Product Group`.
 
-**`Route & SLA` tab:**
+**`Route & SLA` tab** (recorded states 11–24):
 
 ```
 Pick-Up Location *        -> "Select Location"      autocomplete field
 Need Relocation                                  toggle
 <selected fleet name>            e.g. "BUP Freezer"
-Stand by Time *          -> "Select Date"         clock picker
+Stand by Time *          -> "Select Date"         date + TIME picker
 Drop Point Location 1 *  -> "Select Location"      autocomplete field
-Has Deadline                                    toggle
-Need Relocation                                  toggle
-Add Drop Point                              button (adds another drop point)
 ```
 
-`Product Group` has not been opened yet — `Add Product Group` does not exist on
-the `Route & SLA` tab. **Switch sub-tab first.**
+**`Product Group` tab** (recorded states 24–27) — press the tab, then:
+
+```
+No Product Group Yet / Enter your product group      empty state
+[Add Product Group]  row                             (android.view.View)
+```
+
+Pressing the row opens a bottom sheet (`CreateTOSlideOut`), recorded bounds:
+
+```
+"Add Product Group" header           [1305,30][1512,63]
+Name *         EditText  [1259,214][1862,239]
+Quantity *     EditText  [1238,324][1766,393]    unit "Karung" (default)
+Weight *       EditText  [1238,456][1781,525]    unit "Kg"     (default)
+Temperature *  EditText  [1238,588][1804,657]    unit "°C"     (default)
+[Button] "Cancel"              [1543,1098][1660,1170]
+[Button] "Add Product Group"   [1678,1098][1896,1170]
+```
+
+⚠️ **The default units already match the test data** (Karung/Kg/°C) — the
+walkthrough never opened a unit dropdown. ⚠️ **"Add Product Group" is a
+duplicate label**: the empty-state row is a `View`, the slide-out confirm is a
+`Button`. Scope by class. ⚠️ **The panel position shifts between runs**
+(~165px lower in one run) — never use the recorded Y values as constants; find
+the fields by Y *ordering* within `CreateTOSlideOut`.
+
+### Step 3 (Route) layout, as captured from the device
+
+Two live recordings: `fleet-sla-record.txt` (29 states) and
+`fleet-sla-record-2.txt` (19 states, 6 Oct — **source of truth for this
+step**). The Route step is **two-phase**; it does not always open straight to
+a map.
+
+**Phase 1 — the form panel.** After `Next` on Fleet & SLA the step can land
+on a plain form (recording 2, state 16):
+
+```
+"Select Route"    [View]  [1326,713][1434,738]     label, NOT clickable
+"Add your drop point to continue"                  ⚠️ warning — shows even
+                                                   with a committed drop point
+[ImageView] "Select Route" button [1275,794][1485,866]   MID-SCREEN button
+[Cancel]  [Submit]
+```
+
+Pressing the MID-SCREEN `Select Route` opens the **Google Map** (state 17 —
+took **~85 s** to appear; the route computation is slow):
+
+```
+TextureView "Google Map"     [390,327][1290,1128]   + Zoom in / Zoom out
+"Select Route" header        [View]  [1556,411][1656,435]
+"Route List"                 [View]  [1322,526][1406,551]
+"Toll" / "Non-Toll" filters  [1322,587][1538,651]
+[ImageView] "Select Route"   button  [1322,1032][1890,1098]  BOTTOM-RIGHT
+```
+
+While the route computes, a **recommendation card** appears as a map overlay
+(state 18): `BUP TCL - HOKKY | 12.0 Jam | 24.6 Km | Rp 15.000 |
+RECOMMENDATION` at [1322,671][1890,825]. **"RECOMMENDATION" is spelled with two
+M's on the device** (the earlier one-M question is resolved). The numbers come
+from the route engine — **assert the card exists, never the exact values.**
+
+Pressing the BOTTOM-RIGHT `Select Route` returns to the form and shows the
+chosen route card and the final gate (state 19):
+
+```
+<fleet>            e.g. "BUP Freezer"
+"BUP TCL - HOKKY"  |  "12.0 Jam"  |  "24.6 Km"  |  "Rp 15.000"
+[Cancel]  [Submit]
+```
+
+⚠️ **Never press Submit.** Test-02e stops at this gate (shared-device rule —
+no TO may be created or deleted).
+
+**How `selectRoute()` tells the buttons apart:** both "Select Route" buttons
+are `ImageView`s with the same content-desc, separated by Y band (mid-screen
+top≈794, bottom-right top≈1032). Non-clickable `Select Route` header/label
+`View`s are skipped via the `clickable` attribute. The map wait is **150 s**
+because of the slow route load.
 
 ### Two traps on this step
 
@@ -176,8 +248,10 @@ with its own search box).
 - **Minutes are always `00`.** This is a deliberate simplification, and it
   helps a lot: the minute hand always points at 12, so only the hour hand
   needs placing. One coordinate to compute instead of two.
-- Target hour = **current hour + 1**. Computed at runtime by the probe, never
-  hardcoded — so the test stays correct on any day.
+- Target hour = **current hour + 2**, minutes always 00. Confirmed by the
+  tester 6 Oct: both manual walkthroughs dialed hour + 2 (13:43→15:00,
+  14:41→16:00). Computed at runtime, never hardcoded — the test stays correct
+  on any day.
 - **Edge case:** if the suite happens to run at **23:xx**, the target becomes
   `00:00`. On a 12-hour clock that is `12:00 AM`, which *is* later than 23:00
   so it remains valid — but only if the picker exposes an AM/PM control. If it
@@ -208,9 +282,17 @@ different interaction from anything on step 1.
 > is the overlay's search box". **That assumption is now scoped to step 1**
 > and must not be reused on the Product Group tab.
 
-> **Risk to watch:** `-18` needs a minus sign. Android's numeric soft keyboard
-> often has no `-` key, so the test may need `adb shell input text` instead of
-> the on-screen keyboard. Verify before assuming.
+> **RESOLVED 6 Oct (recording 2, states 13–14):** the minus sign IS typeable —
+> `-` enters the Temperature field directly and the test types `-18` as plain
+> text. No `adb shell input text` needed.
+>
+> **Live-recorded panel facts (recording 2, states 13–14):** the slide-out has
+> exactly four EditTexts, found by **position** (0 = Name, 1 = Quantity,
+> 2 = Weight, 3 = Temperature) — never by `CreateTOSlideOut` scoping, since
+> that overlay node is a **sibling**, not the fields' ancestor. Empty text
+> `hint` attributes: `Enter product group name`, `input quantity`,
+> `input weight`, `input temperature`. Unit buttons default to
+> `Karung`/`Kg`/`°C` — matching the test data, so no unit interaction needed.
 
 ### 6 — Route page
 
@@ -222,9 +304,10 @@ The page has **`Toll`** and **`Non Toll`** options.
 configured route is not being matched — that would be worth raising, not
 something to code around.
 
-**Preserve the exact spelling `RECOMENDATION`** if that is what the app
-displays. Do not "correct" it to `RECOMMENDATION`; a selector built on the
-corrected spelling will never match.
+**Spelling resolved 6 Oct (recording 2, state 18):** the recommendation chip on
+the map overlay reads **`RECOMMENDATION`** (two M's). It is decoration on the
+route card, not a control — assert the route card `BUP TCL - HOKKY` exists
+instead of matching that text.
 
 ### Final submit and success
 
@@ -419,6 +502,7 @@ rather than guessing selectors; every field mapped so far came from a probe.
 | `tests/explore-picker.js` | worked out how the date picker accepts input |
 | `tests/probe-step2.js` | maps Step 2 (Fleet and SLA) layout |
 | `tests/probe-step2b.js` | maps the two location dropdowns, the standby clock picker (full XML), and the Product Group sub-tab |
+| `tests/record-user-steps.js` | read-only screen recorder for guided walkthroughs — set `RECORD_LOG` to a log file, pass minutes, then watch (e.g. `$env:RECORD_LOG='fleet-sla-record-2.txt'; node tests/record-user-steps.js 45`) |
 
 **Failed-test artefacts** land in `dumps/` as XML + PNG. Read the XML first —
 it is faster and more precise than a screenshot. Prefer `JSON.stringify` on

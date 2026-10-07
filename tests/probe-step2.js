@@ -9,7 +9,7 @@
  * Test data for step 2, from the sheet:
  *   A. Route and SLA
  *      pick up location  : tirtamas coldstorindo
- *      stand by time    : current hour + 1
+ *      stand by time    : current hour + 2
  *      drop point        : Hokky buah citraland
  *   B. Product Group
  *      name        : Ayam

@@ -47,6 +47,16 @@ const TESTS = [
         name: 'Test-02c Route and Fleet Type',
         why: 'complete Step 1, advance to Fleet and SLA',
     },
+    {
+        file: 'test-02d-standby-time.js',
+        name: 'Test-02d Stand by Time',
+        why: 'clock-face dial: now + 2h, minutes 00',
+    },
+    {
+        file: 'test-02e-create-to-route.js',
+        name: 'Test-02e Full recorded flow',
+        why: 'locations, product group, route — stops at Submit gate',
+    },
 ];
 
 /** Run one test file as a child process. Resolves to pass/fail. */

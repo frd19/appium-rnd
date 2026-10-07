@@ -199,7 +199,7 @@ async function main() {
     console.log('\n=== Full walkthrough probe: steps 5, 6 and final submit ===\n');
     const standby = targetStandby();
     console.log(`  target standby time: ${standby.text}`
-        + `  (current hour + 1, minutes 00)\n`);
+        + `  (current hour + 2, minutes 00)\n`);
 
     let driver;
     try {

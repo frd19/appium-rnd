@@ -60,6 +60,8 @@ node tests/smoke.js
 | `node tests/test-02-create-transport-order.js` | Create TO: entry path, Basic Detail, validation ✅ |
 | `node tests/test-02b-create-to-fill-form.js` | Fills customer, order date, default condition ✅ |
 | `node tests/test-02c-create-to-route-fleet.js` | Route + Fleet Type, advances to Fleet and SLA ✅ |
+| `node tests/test-02d-standby-time.js` | Stand by Time clock-face dial (now + 2h, minutes 00) ✅ |
+| `node tests/test-02e-create-to-route.js` | Full recorded flow → Submit gate (never submits) — locations, product group, route ✅ |
 | `node tests/all.js` | Runs everything in order and prints a summary |
 | `node tests/probe-selectors.js` | Throwaway: tests dropdown selectors against the live UI |
 | `node tests/explore-picker.js` | Throwaway: works out how the date picker accepts taps |
@@ -156,9 +158,10 @@ node tests/test-02b-create-to-fill-form.js
 | Test-02 entry path + fields + validation | ✅ passing |
 | Test-02b customer + order date + default condition | ✅ passing |
 | Test-02c route + fleet type, advance to Step 2 | ✅ passing |
-| **Step 2 — Fleet and SLA** (pick up, standby time, drop point) | layout mapped, actions not written — see HANDOFF.md §5 |
-| **Step 2 — Product Group** (`Ayam`, `10 Karung`, `10 kg`, `-18`) | not started |
-| **Final submit → order actually created** | not started |
+| **Step 2 — Fleet and SLA** (pick up, standby time, drop point) | ✅ encoded (tests 02d + 02e) |
+| **Step 2 — Product Group** (`Ayam`, `10 Karung`, `10 kg`, `-18`) | ✅ encoded (test-02e) |
+| **Step 3 — Route** (map, recommendation, Select Route) | ✅ encoded (test-02e) |
+| **Final submit → order actually created** | not started (deliberate — see below) |
 | Test-03 Convert sales order | not started (you marked it optional) |
 
 > **The order is still not actually created.** No test presses Next and confirms

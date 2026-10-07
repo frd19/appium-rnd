@@ -478,14 +478,19 @@ const TransportOrderPage = {
         // above it. So: read and press the suggestion FIRST, and only touch
         // the keyboard afterwards, when focus has left the search box.
         const picked = await this.matchSuggestion(driver, depotName);
-        if (!picked) {
-            const seen = await this.visibleFormLabels(driver);
-            throw new Error(
-                `No suggestion matched "${depotName}" for query "${query}". `
-                + `Suggestions on screen:\n    - ${seen.join('\n    - ')}`
-            );
+        if (picked) {
+            log('INFO', `${caption}: tapped suggestion "${picked}".`);
+        } else {
+            // RECORDED, 6 Oct (fleet-sla-record.txt, states 14-16):
+            //   typing the FULL query "tirtamas" leaves the suggestion list
+            //   EMPTY ("No address found"), yet pressing Select Location
+            //   still commits the location as "Tirtamas Coldstorindo".
+            //   So the suggestion tap is NOT mandatory — the typed query
+            //   is enough. The commit is proven afterwards by reading the
+            //   value the form actually shows under the caption.
+            log('INFO', `${caption}: no suggestion listed for "${depotName}" `
+                + `— committing the typed query "${query}" directly.`);
         }
-        log('INFO', `${caption}: selected "${picked}".`);
 
         // Step 3 — commit it.
         //
@@ -511,8 +516,66 @@ const TransportOrderPage = {
             );
         }
 
-        log('INFO', `${caption}: confirmed with Select Location.`);
+        // Plot staff verify by reading the label back — we verify by reading
+        // the form's own state: the value sitting under the caption.
+        const shown = await this.readFieldValue(driver, caption);
+        if (!shown || !String(shown).toLowerCase()
+            .includes(depotName.toLowerCase())) {
+            throw new Error(
+                `"${caption}" should now show "${depotName}" but the field `
+                + `reads "${shown || '(empty)'}". The location was not `
+                + 'committed to the form.'
+            );
+        }
+        log('INFO', `${caption}: form confirms "${shown}".`);
+
         return true;
+    },
+
+    /**
+     * Read the value node directly below a form caption.
+     *
+     * The caption is a View; the value sits in the next labelled node below
+     * it (an ImageView for the location fields). This is the app's own
+     * state — the same proof readStandbyTime() uses — never a label we
+     * wrote ourselves.
+     *
+     * @returns the first content-desc below the caption, or null
+     */
+    async readFieldValue(driver, caption) {
+        try {
+            const capEl = await driver.$(`~${caption}`);
+            if (!(await capEl.isExisting().catch(() => false))) return null;
+            const capY = (await capEl.getLocation()).y;
+
+            const nodes = await driver.$$('//*[@content-desc != ""]');
+            const total = await nodes.length;
+            let best = null;
+            let bestY = Infinity;
+            for (let i = 0; i < total; i += 1) {
+                const desc = await nodes[i].getAttribute('content-desc')
+                    .catch(() => null);
+                // Appium returns the string "null" for a missing attribute.
+                if (!desc || desc === 'null') continue;
+                const loc = await nodes[i].getLocation().catch(() => null);
+                if (!loc) continue;
+                // The left sidebar ("Config", "Route Plan", ...) sits at
+                // x < 400 and is the next labelled node below a top-of-form
+                // caption, which misled the first version of this reader
+                // into reporting "Config" instead of the field value. The
+                // form content starts at x≈914, so a label from the sidebar
+                // can never be a field value.
+                if (loc.x < 500) continue;
+                if (loc.y <= capY) continue;
+                if (loc.y < bestY) {
+                    bestY = loc.y;
+                    best = desc;
+                }
+            }
+            return best;
+        } catch {
+            return null;
+        }
     },
 
     // ---------------------------------------------------------
@@ -553,10 +616,15 @@ const TransportOrderPage = {
     //     0° face position with hour 12 and so cannot be set unambiguously.
     //     setClockTime() throws rather than committing 12:00 at 23:xx.
 
-    /** The stand-by time this test should set: (now + 1h), minutes 00. */
+    /**
+     * The stand-by time this test should set: (now + 2h), minutes 00.
+     *
+     * Tester's rule, confirmed 6 Oct: both recorded walkthroughs dialed
+     * **hour + 2** (13:43 -> 15:00, 14:41 -> 16:00), so the test matches that.
+     */
     targetStandbyTime() {
         const now = new Date();
-        return { hour: (now.getHours() + 1) % 24, minute: 0 };
+        return { hour: (now.getHours() + 2) % 24, minute: 0 };
     },
 
 
@@ -626,11 +694,16 @@ const TransportOrderPage = {
      * @returns the value, or null when neither attribute carries one
      */
     async readNodeValue(el) {
-        const desc = await el.getAttribute('content-desc').catch(() => null);
+        // Appium returns the literal string "null" for node attributes that
+        // are absent (e.g. a Flutter EditText with no content-desc). Treat
+        // that as "no value", not as a real value.
+        let desc = await el.getAttribute('content-desc').catch(() => null);
+        if (desc === 'null') desc = null;
         if (desc !== null && desc !== undefined && String(desc).trim() !== '') {
             return desc;
         }
-        const text = await el.getAttribute('text').catch(() => null);
+        let text = await el.getAttribute('text').catch(() => null);
+        if (text === 'null') text = null;
         if (text !== null && text !== undefined && String(text).trim() !== '') {
             return text;
         }
@@ -640,7 +713,7 @@ const TransportOrderPage = {
     /** Read an element's text attribute, or null. */
     async readText(el) {
         const t = await el.getAttribute('text').catch(() => null);
-        return t;
+        return t === 'null' ? null : t;
     },
 
     /** Read an element's value as a number, or null. */
@@ -652,7 +725,7 @@ const TransportOrderPage = {
     },
 
     /**
-     * Set Stand by Time to (current hour + 1), minutes 00, today.
+     * Set Stand by Time to (current hour + 2), minutes 00, today.
      *
      * @returns the time that was set, as "HH:mm"
      */
@@ -716,7 +789,7 @@ const TransportOrderPage = {
         // STRICT ORDER: hour, then minute, then the confirm button. Never the
         // other way round — the tester was explicit about this.
         //
-        //   1. HOUR    -> current hour + 1   (e.g. 09 -> 10)
+        //   1. HOUR    -> current hour + 2   (e.g. 09 -> 11)
         //   2. MINUTE  -> always 00, i.e. 12 o'clock
         //   3. CONFIRM -> the button the picker actually shows ("OK")
         //
@@ -1651,6 +1724,412 @@ const TransportOrderPage = {
         await item.click();
         await driver.pause(2500);
         return item;
+    },
+
+    // ---------------------------------------------------------
+    // Fleet and SLA — Product Group (sliding panel)
+    // ---------------------------------------------------------
+    //
+    // MEASURED on the device, 6 Oct 2026 (fleet-sla-record.txt, states
+    // 24-27). The "Product Group" tab on Step 2 opens a bottom sheet:
+    //
+    //   "Product Group" tab (content tab)      [View]  [1380,414][1820,474]
+    //   empty state "No Product Group Yet"
+    //              "Enter your product group"
+    //   "Add Product Group" row                [View]  [939,731][1821,797]
+    //
+    //   after pressing the row, the slide-out (CreateTOSlideOut):
+    //     "Add Product Group" header                       [1305,30][1512,63]
+    //     "Enter the details of the product" subtitle
+    //     Name *         EditText  [1259,214][1862,239]
+    //     Quantity *     EditText  [1238,324][1766,393]   unit "Karung"
+    //     Weight *       EditText  [1238,456][1781,525]   unit "Kg"
+    //     Temperature *  EditText  [1238,588][1804,657]   unit "°C"
+    //     [Button] "Cancel"                  [1543,1098][1660,1170]
+    //     [Button] "Add Product Group"       [1678,1098][1896,1170]
+    //
+    // DEFAULT UNITS ARE ALREADY CORRECT (Karung / Kg / °C) — the recorded
+    // walkthrough never opened a unit dropdown, and the tab's defaults match
+    // the test data exactly. So only the four text fields need typing.
+    //
+    // DUPLICATE LABELS: "Add Product Group" is BOTH the empty-state row
+    // (android.view.View) and the slide-out's confirm button
+    // (android.widget.Button). They must be selected by class, never by
+    // `~Add Product Group` — that picks whichever comes first in the tree.
+
+    /**
+     * Type text into a focused EditText and PROVE it landed.
+     *
+     * Proving it: reads the field's own text afterwards and compares.
+     * Room for the same failure as the dial — field answers but app state
+     * did not change — is ruled out because the value read back must equal
+     * what was typed.
+     *
+     * The minus sign is special-cased: on this device the keyboard CAN type
+     * it (recorded: the tester typed "-" into Temperature and it showed),
+     * but the API that delivers a "-" differs between Appium builds. So try
+     * the deterministic approach first — press KEYCODE_MINUS (69) then type
+     * the digits — and fall back to typing the whole string as text.
+     *
+     * @returns the value proven in the field
+     */
+    async typeInto(driver, index, value, label) {
+        const want = String(value);
+
+        // One attempt = snap the field fresh, press it, type by one method,
+        // close the keyboard, and read the field back from a NEW snapshot.
+        // Everything is re-queried: Flutter re-renders on focus, so any
+        // element reference captured earlier can go stale and read "null"
+        // even though the text landed (dumps proved "ayam" was in the field
+        // while the read said null).
+        const attempt = async (doType) => {
+            const before = await this.panelFields(driver);
+            const el = before[index] && before[index].el;
+            if (!el) {
+                throw new Error(
+                    `${label}: the field is not on screen (the panel now shows `
+                    + `${before.length} of 4 fields).`
+                );
+            }
+            await this.press(driver, el);
+            await driver.pause(700);
+            await doType(el).catch(async (e) => {
+                log('WARN', `${label}: a typing method failed `
+                    + `(${e.message.split('\n')[0]}) — trying the next one.`);
+            });
+            await driver.pause(700);
+            // The human walkthrough presses the keyboard's Done button after
+            // each field (recording). Fire the IME's "done" action too —
+            // Flutter commits the text when the editor action arrives.
+            try {
+                await driver.execute('mobile: performEditorAction',
+                    { action: 'done' });
+                await driver.pause(500);
+            } catch (e) {
+                log('WARN', `${label}: keyboard Done action not available `
+                    + `(${String(e.message).split('\n')[0]}).`);
+            }
+            // The open keyboard hides fields below it from the a11y tree.
+            // Close it so the panel is complete again, then read the SAME
+            // position in the sorted list as the field we just typed into.
+            await this.dismissKeyboard(driver);
+            const after = await this.panelFields(driver);
+            const target = after[index];
+            const got = target ? await this.readNodeValue(target.el) : null;
+            return got !== null && got !== undefined ? String(got) : '';
+        };
+
+        if (want.startsWith('-')) {
+            // The minus sign: try typing the whole string first; if the IME
+            // refuses the leading dash, deliver it as KEYCODE_MINUS and then
+            // the digits as key events (which appends instead of replacing).
+            const bare = want.slice(1);
+            const roads = [
+                {
+                    name: 'typed as text',
+                    do: async (el) => el.setValue(want),
+                },
+                {
+                    name: 'KEYCODE_MINUS + key events',
+                    do: async () => {
+                        await driver.pressKeyCode(69);
+                        await driver.pause(300);
+                        await driver.keys(bare);
+                    },
+                },
+                {
+                    name: 'KEYCODE_MINUS + setValue digits',
+                    do: async (el) => {
+                        await driver.pressKeyCode(69);
+                        await driver.pause(300);
+                        await el.setValue(bare);
+                    },
+                },
+            ];
+            for (const road of roads) {
+                const got = await attempt(road.do);
+                if (got === want) {
+                    log('PASS', `${label} = "${want}" (${road.name}).`);
+                    return want;
+                }
+            }
+            // The read-back of the LAST road tells us what the field holds.
+            const got = await attempt(async () => {});
+            throw new Error(
+                `Could not type "${want}" into ${label}. Field reads `
+                + `"${got || '(empty)'}" after three methods.`
+            );
+        }
+
+        const doText = async (el) => el.setValue(want);
+        let got = await attempt(doText);
+        if (got !== want) {
+            // One retry — a slow first paint can lose a keystroke.
+            got = await attempt(doText);
+        }
+        if (got !== want) {
+            throw new Error(
+                `Could not type "${want}" into ${label}. Field reads `
+                + `"${got || '(empty)'}".`
+            );
+        }
+        log('PASS', `${label} = "${want}".`);
+        return want;
+    },
+
+    /**
+     * The four EditTexts of the "Add Product Group" slide-out, ordered
+     * top-to-bottom and filtered to the panel region of the screen.
+     *
+     * Note: "CreateTOSlideOut" is NOT the fields' ancestor in the
+     * accessibility tree (it sits at a shallower level, as a sibling
+     * overlay), so scoping by it finds nothing. The panel fields instead
+     * occupy the right half of the screen between the header and the
+     * buttons; every other EditText the form exposes lives outside that
+     * window.
+     *
+     * @returns [{ el, y, hint }] sorted by y (0=Name, 1=Quantity, 2=Weight,
+     *          3=Temperature)
+     */
+    async panelFields(driver) {
+        const edits = await driver.$$('//android.widget.EditText');
+        const list = [];
+        const n = await edits.length;
+        for (let i = 0; i < n; i += 1) {
+            const loc = await edits[i].getLocation().catch(() => null);
+            if (!loc) continue;
+            const hint = await edits[i].getAttribute('hint').catch(() => null);
+            if (loc.x < 900) continue;                // not the right half
+            if (loc.y < 100 || loc.y > 1100) continue; // header..buttons band
+            list.push({ el: edits[i], y: loc.y, hint });
+        }
+        return list.sort((a, b) => a.y - b.y);
+    },
+
+    /**
+     * Add a product group from the "Product Group" tab of Step 2.
+     *
+     * Default test data (matches the FUNCTIONAL sheet + the recorded run):
+     *   Name Ayam, Quantity 10 (Karung), Weight 10 (Kg), Temperature -18 (°C)
+     *
+     * @returns the product name added, so the caller can verify the tab
+     */
+    async addProductGroup(driver, product = {
+        name: 'ayam', quantity: '10', weight: '10', temperature: '-18',
+    }) {
+        // --- bring up the tab (idempotent — it is safe to tap again) ---
+        const tab = await this.scrollToField(driver, 'Product Group');
+        await this.press(driver, tab);
+        await driver.pause(1500);
+
+        // --- the empty-state row that opens the slide-out ---
+        const openRow = await driver
+            .$('//android.view.View[@content-desc="Add Product Group"]');
+        if (!(await openRow.isExisting().catch(() => false))) {
+            throw new Error(
+                'No "Add Product Group" row on the Product Group tab. '
+                + 'Is a product group already added?'
+            );
+        }
+        await this.press(driver, openRow);
+        await waitFor(driver, '~Enter the details of the product', 8000);
+
+        // --- the four fields ---
+        // `panelFields()` snaps the slide-out's EditTexts fresh on every
+        // call (Flutter re-renders), filtered to the panel region and
+        // ordered top-to-bottom: 0=Name, 1=Quantity, 2=Weight, 3=Temperature.
+        const seed = await this.panelFields(driver);
+        if (seed.length < 4) {
+            // An open keyboard pushes fields below it out of the a11y tree.
+            // Close it and re-snapshot before blaming the panel.
+            await this.dismissKeyboard(driver);
+            await driver.pause(1000);
+        }
+        const fields = await this.panelFields(driver);
+        if (fields.length < 4) {
+            throw new Error(
+                `Expected 4 fields in the Add Product Group panel, found `
+                + `${fields.length} (y: ${fields.map((f) => f.y).join(', ')}).`
+            );
+        }
+
+        await this.typeInto(driver, 0, product.name, 'Name');
+        await this.typeInto(driver, 1, product.quantity, 'Quantity');
+        await this.typeInto(driver, 2, product.weight, 'Weight');
+        // typeInto always closes the keyboard after a field, so Temperature
+        // (the lowest field) is reachable by its index like the others.
+        await this.typeInto(driver, 3, product.temperature, 'Temperature');
+        // The confirm button sits at the panel bottom, behind a keyboard.
+        await this.dismissKeyboard(driver);
+        await driver.pause(800);
+
+        // --- confirm: this particular element is the BUTTON, not the row ---
+        const confirm = await driver
+            .$('//android.widget.Button[@content-desc="Add Product Group"]');
+        if (!(await confirm.isExisting().catch(() => false))) {
+            throw new Error(
+                'Could not find the "Add Product Group" confirm button in '
+                + 'the slide-out.'
+            );
+        }
+        await this.press(driver, confirm);
+        await driver.pause(2000);
+
+        // The panel must close — that is the app accepting the group.
+        if (await isDisplayed(driver, '~Enter the details of the product', 1500)) {
+            // A covering keyboard can swallow the button press; get a fresh
+            // reference and press again with the keyboard down.
+            log('INFO', 'Slide-out still open — closing keyboard and retrying.');
+            await this.dismissKeyboard(driver);
+            await driver.pause(800);
+            const retry = await driver
+                .$('//android.widget.Button[@content-desc="Add Product Group"]')
+                .catch(() => null);
+            if (retry && (await retry.isExisting().catch(() => false))) {
+                await this.press(driver, retry);
+                await driver.pause(2000);
+            }
+            if (await isDisplayed(driver, '~Enter the details of the product', 1500)) {
+                throw new Error(
+                    'Add Product Group accepted, but the slide-out did not '
+                    + 'close. The group may not have been saved.'
+                );
+            }
+        }
+
+        // Soft proof it landed: the tab should now show the product name.
+        await driver.pause(1500);
+        const nodes = await driver.$$('//*[@content-desc != ""]');
+        const total = await nodes.length;
+        for (let i = 0; i < total; i += 1) {
+            const desc = await nodes[i].getAttribute('content-desc')
+                .catch(() => null);
+            if (desc && desc.toLowerCase().includes(product.name.toLowerCase())) {
+                log('INFO', `Product Group tab now shows "${desc.replace(/\n/g, ' · ')}".`);
+                return product.name;
+            }
+        }
+        log('INFO', 'Slide-out closed; product row not independently readable '
+            + 'from the tree — proceeding (the closed panel is the acceptance '
+            + 'signal).');
+        return product.name;
+    },
+
+    // ---------------------------------------------------------
+    // Step 3 — Route selection (map screen)
+    // ---------------------------------------------------------
+    //
+    // MEASURED on the device, 6 Oct 2026 (fleet-sla-record.txt, states
+    // 28-29). After Next on Fleet & SLA, the Route step opens a map:
+    //
+    //   "Select Route" header          [View]       [1556,306][1656,330]
+    //   "Route List"                   [View]       [1322,421][1406,446]
+    //   "Toll" / "Non-Toll" filters    [View]
+    //   [ImageView] "Select Route"     button       [1322,1104][1890,1170]
+    //
+    // Pressing the bottom-right "Select Route" returns to the form and
+    // reveals the chosen route card plus the Submit button:
+    //   "BUP TCL - HOKKY"  "12.0 Jam"  "24.6 Km"  "Rp 15.000"   [Submit]
+    //
+    // "Select Route" is a DUPLICATE label (header + button) — pick the one
+    // in the lower half of the screen by Y position.
+
+    /**
+     * Pick the route on the map screen.
+     *
+     * Does NOT press Submit — the shared-tablet rule is to inspect up to
+     * the last gate and then cancel out, so no TO is ever created.
+     *
+     * @returns the route card name shown on the form afterwards
+     */
+    /**
+     * Find the real "Select Route" BUTTON whose TOP edge sits in a Y band.
+     *
+     * Buttons are `android.widget.ImageView`; the "Select Route" headers /
+     * labels are plain Views (top≈410/710) and are excluded by class. The
+     * form panel has the mid-screen button (top≈790) that opens the map, and
+     * the map has the bottom-right confirm button (top≈1030-1100).
+     *
+     * The bottom-right button starts DISABLED (`enabled="false"`) while the
+     * route is still computing, and only becomes pressable once the route is
+     * ready — pass `wantEnabled = true` to require that.
+     */
+    async routeButton(driver, minTop, maxTop, wantEnabled) {
+        const candidates = await driver
+            .$$('//android.widget.ImageView[@content-desc="Select Route"]');
+        const total = await candidates.length;
+        for (let i = 0; i < total; i += 1) {
+            const loc = await candidates[i].getLocation().catch(() => null);
+            if (!loc) continue;
+            if (loc.y < minTop || loc.y > maxTop) continue;
+            if (wantEnabled) {
+                const enabled = await candidates[i].getAttribute('enabled')
+                    .catch(() => 'false');
+                if (String(enabled) !== 'true') continue;
+            }
+            return candidates[i];
+        }
+        return null;
+    },
+
+    async selectRoute(driver) {
+        // Recording 2, state 16: the Route step can open as a form panel
+        // with a mid-screen "Select Route" button and NO map yet. The map
+        // (Route List + Toll/Non-Toll + bottom-right "Select Route") only
+        // appears AFTER pressing it.
+        if (!(await isDisplayed(driver, '~Route List', 3000))) {
+            const mid = await this.routeButton(driver, 700, 1000);
+            if (!mid) {
+                throw new Error(
+                    'No route map and no mid-screen "Select Route" button '
+                    + 'to open it. The Route step is not on screen.'
+                );
+            }
+            log('INFO', 'Route map not up yet — pressing the mid-screen '
+                + '"Select Route" button.');
+            await this.press(driver, mid);
+        }
+
+        // The route computation is SLOW — the recorded run took ~85s before
+        // the Google Map (with "Route List") appeared. Give it plenty of room.
+        await waitFor(driver, '~Route List', 150000);
+
+        // The bottom-right button exists as soon as the map renders, but it
+        // is DISABLED until the route is computed (6 Oct run: enabled="false"
+        // in the tree while the route card was still loading). Poll for it to
+        // become enabled — the app's own "route ready" gate — then press it.
+        // Band: top 1000-1200 (measured top≈1030; the original recording had
+        // top≈1104). The 6 Oct recording showed ~85s of route computation.
+        log('INFO', 'Route map is up — waiting for the route computation to '
+            + 'enable the bottom-right "Select Route" button.');
+        const deadline = Date.now() + 120000;
+        let button = await this.routeButton(driver, 1000, 1200, true);
+        while (!button && Date.now() < deadline) {
+            await driver.pause(3000);
+            button = await this.routeButton(driver, 1000, 1200, true);
+        }
+        if (!button) {
+            throw new Error(
+                'The route map is up but the bottom-right "Select Route" '
+                + 'button never became enabled (route computation did not '
+                + 'finish within 120s).'
+            );
+        }
+        await this.press(driver, button);
+        await driver.pause(3000);
+
+        // Back on the form: the route card + the Submit gate.
+        const card = await waitFor(driver, '~BUP TCL - HOKKY', 20000);
+        if (!(await isDisplayed(driver, '~Submit'))) {
+            throw new Error(
+                'Route selected but "Submit" is not showing. The form did '
+                + 'not advance to the final gate.'
+            );
+        }
+        const cardDesc = await this
+            .readNodeValue(card).catch(() => 'BUP TCL - HOKKY');
+        log('PASS', `Route card confirmed: ${cardDesc.replace(/\n/g, ' · ')}.`);
+        return cardDesc;
     },
 };
 
