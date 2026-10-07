@@ -500,28 +500,41 @@ const TransportOrderPage = {
         // The suggestions are readable while the keyboard is up — they sit
         // above it. So: read and press the suggestion FIRST, and only touch
         // the keyboard afterwards, when focus has left the search box.
-        // Google autocomplete is ASYNC: on 7 Oct the first read (3 s after
-        // typing) caught an EMPTY list even though the rows appeared a moment
-        // later. The old code then fell into the "empty list" fallback and
-        // pressed a DISABLED "Select Location" (enabled="false"), so nothing
-        // committed and the overlay stayed open. Now we POLL for the wanted
-        // row, and only fall back when the list stays genuinely empty.
-        const deadlineSuggest = Date.now() + 12000;
+        // Google autocomplete is ASYNC and its latency varies run to run:
+        //   run5/run7 — the rows appeared ~8-13 s after typing (network
+        //     throttling), so a single early read saw an empty list;
+        //   run6 — the rows appeared in ~2 s and were tapped.
+        // Only trust "empty list" AFTER polling through the deadline. Two
+        // exit gates come from the APP itself, never from our timing:
+        //   - the wanted row appears           -> tap it
+        //   - "Select Location" enables itself -> the app accepted the typed
+        //     query directly (recorded 6 Oct "No address found" behavior)
+        // Never break out on a transient empty read — that is how run7 fell
+        // into the "commit typed query" path while rows were still loading.
+        const deadlineSuggest = Date.now() + 15000;
         let picked = null;
-        let listEmpty = false;
+        let sawRows = false;
+        const confirm = await driver.$('~Select Location');
+        if (!(await confirm.isExisting().catch(() => false))) {
+            throw new Error(
+                `Chose "${depotName}" but could not find the "Select Location" `
+                + `button to confirm it. The value is NOT committed yet.`
+            );
+        }
         while (Date.now() < deadlineSuggest) {
             const hit = await this.matchSuggestion(driver, depotName);
             if (hit) { picked = hit; break; }
-            if (!(await this.anySuggestionRow(driver))) {
-                listEmpty = true;
-                break; // rows are not coming — use the recorded fallback
-            }
-            await driver.pause(1500);
+            sawRows = sawRows || (await this.anySuggestionRow(driver));
+            const enabled = String(
+                await confirm.getAttribute('enabled').catch(() => 'false')
+            ) === 'true';
+            if (enabled && !sawRows) break; // app accepted the typed query
+            await driver.pause(1000);
         }
 
         if (picked) {
             log('INFO', `${caption}: tapped suggestion "${picked}".`);
-        } else if (listEmpty) {
+        } else if (!sawRows) {
             // RECORDED, 6 Oct (fleet-sla-record.txt, states 14-16):
             //   typing the FULL query "tirtamas" leaves the suggestion list
             //   EMPTY ("No address found"), yet pressing Select Location
@@ -545,18 +558,11 @@ const TransportOrderPage = {
         // Inside the overlay there is exactly one "Select Location", so the
         // scoping that matters was already applied when we found the field.
         //
-        // The button starts DISABLED until a suggestion is selected (the 7 Oct
-        // dump: enabled="false" while rows were listed). Wait for the app's
-        // own "value ready" gate before pressing — the same pattern as the
-        // bottom-right "Select Route" button on the map step.
-        const confirm = await driver.$('~Select Location');
-        if (!(await confirm.isExisting().catch(() => false))) {
-            throw new Error(
-                `Chose "${depotName}" but could not find the "Select Location" `
-                + `button to confirm it. The value is NOT committed yet.`
-            );
-        }
-        const deadlineEnabled = Date.now() + 8000;
+        // The button starts DISABLED until a suggestion is selected (both
+        // failure dumps: enabled="false" while rows were listed). Wait for
+        // the app's own "value ready" gate before pressing — the same pattern
+        // as the bottom-right "Select Route" button on the map step.
+        const deadlineEnabled = Date.now() + 10000;
         let ready = String(
             await confirm.getAttribute('enabled').catch(() => 'false')
         ) === 'true';

@@ -476,7 +476,9 @@ Tee-Object runs\runN.txt`) and read `runs\runN.txt`, not a `Select-Object
 | #3 (7 Oct) | — | stopped on user request mid-run |
 | #4 (7 Oct) | all.js (7 files) | ✅ 7/7 — see `runs/run4.txt` |
 | #5 (7 Oct) | all.js (3 files, consolidated) | ❌ 2/3 — Test-02 failed at Pick-Up Location. **Root cause:** the suggestion list was read ONCE, 3 s after typing, and that read caught the Google autocomplete before it rendered. The code then fell into the "empty list" fallback and pressed a **disabled** `Select Location` button (`enabled="false"` in the dump — no row had been selected). **Fixed:** `selectLocation()` now polls up to 12 s for the wanted row, falls back to the direct-commit path only when the list is genuinely empty, refuses to guess when rows exist but none matches, and never presses "Select Location" until it is `enabled` (`anySuggestionRow()` added for the empty-list check). |
-| #6 (7 Oct) | all.js (3 files, consolidated) | ✅ 3/3 — see `runs/run6.txt` |
+| #6 (7 Oct) | all.js (3 files) | ✅ 3/3 — see `runs/run6.txt` |
+| #7 (7 Oct) | all.js (3 files) | ❌ 2/3 — *the first fix's own bug.* The new poll loop broke out after its FIRST read if the list looked empty, so the slow load (~8-13 s on throttled autocomplete) triggered the fallback again and "Select Location" never enabled. **Fixed:** the loop now never exits on a transient empty read — it polls the full 15 s and only exits early when the APP signals readiness (the wanted row appears, or the button enables itself = the recorded no-suggestions path). |
+| #8 (7 Oct) | all.js (3 files) | ✅ 3/3 — see `runs/run8.txt` |
 
 Why run #5 only surfaced now: in the seven-file suite, `test-02d` and
 `test-02e` ran their own location steps moments before, which by luck gave the
